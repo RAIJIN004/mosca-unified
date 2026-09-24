@@ -12,6 +12,7 @@ URLS = {"testnet": "https://demo-fapi.binance.com", "real": "https://fapi.binanc
 TAG = "mosca-"
 SHARD = "0/1"
 MAXPOS = 5
+ADOPT = False
 def shard_syms():
     i, n = (int(x) for x in SHARD.split("/"))
     return SYMS[i::n]
@@ -127,12 +128,50 @@ def run_once(ctx, risk_usd, short_half=True):
                         "type": "LIMIT", "quantity": abs(pa), "price": tpr, "timeInForce": "GTC",
                         "reduceOnly": "true", "newClientOrderId": TAG + f"tp{int(now/1000)}"}, True)
                 m["tp_placed"] = True
+        # SL vivo? si la posicion sigue abierta pero su SL desaparecio -> reponer o cerrar
+        sl_vivo = any(o.get("symbol") == sym and str(o.get("clientAlgoId", "")).startswith(TAG)
+                      for o in ALGOS)
+        if not sl_vivo:
+            acts.append(("SL-ausente", sym, f"reponiendo SL @ {m['sl']}"))
+            if not ctx.dry:
+                try:
+                    step, tick = excel(sym, ctx, {})
+                    ctx.req("POST", "/fapi/v1/algoOrder", {"algoType": "CONDITIONAL", "symbol": sym,
+                            "side": "SELL" if pa > 0 else "BUY", "positionSide": "BOTH",
+                            "type": "STOP_MARKET", "quantity": abs(pa), "triggerPrice": m["sl"],
+                            "workingType": "CONTRACT_PRICE", "reduceOnly": "true",
+                            "newClientOrderId": TAG + f"sr{int(now/1000)}"}, True)
+                except SystemExit as se:
+                    # sin red de SL no se opera: cierra a mercado antes que liquidacion
+                    ctx.req("POST", "/fapi/v1/order", {"symbol": sym, "side": "SELL" if pa > 0 else "BUY",
+                            "type": "MARKET", "quantity": abs(pa), "reduceOnly": "true",
+                            "newClientOrderId": TAG + f"e{int(now/1000)}"}, True)
+                    acts.append(("CRIT-cierre-sin-SL", sym, str(se)[:120]))
         if bars > 32:
             acts.append(("timeout-close", sym, pa))
             if not ctx.dry:
                 ctx.req("POST", "/fapi/v1/order", {"symbol": sym, "side": "SELL" if pa > 0 else "BUY",
                         "type": "MARKET", "quantity": abs(pa), "reduceOnly": "true",
                         "newClientOrderId": TAG + f"x{int(now/1000)}"}, True)
+    # 3b. huerfanas: posicion abierta sin registro -> por defecto SOLO reporta (nunca toca lo ajeno)
+    for sym, p in poss.items():
+        pa = float(p.get("positionAmt", 0) or 0)
+        if abs(pa) < 1e-9 or sym in st["managed"] or sym not in shard_syms():
+            continue
+        if ADOPT:
+            px = float(p.get("entryPrice") or 0); sgn = 1 if pa > 0 else -1
+            sl = px - sgn * abs(px) * 0.08  # SL emergencia 8% (cota maxima del backtest)
+            acts.append(("adopt-huerfana", sym, f"SL emergencia {sl:.8g}"))
+            if not ctx.dry:
+                ctx.req("POST", "/fapi/v1/algoOrder", {"algoType": "CONDITIONAL", "symbol": sym,
+                        "side": "SELL" if pa > 0 else "BUY", "positionSide": "BOTH",
+                        "type": "STOP_MARKET", "quantity": abs(pa), "triggerPrice": round(sl, 8),
+                        "workingType": "CONTRACT_PRICE", "reduceOnly": "true",
+                        "newClientOrderId": TAG + f"a{int(now/1000)}"}, True)
+                st["managed"][sym] = {"t0": now, "sl": round(sl, 8), "sl_id": None,
+                                      "tp_placed": False, "entry_id": None}
+        else:
+            acts.append(("WARN-huerfana", sym, f"pos {pa:g} sin registro: NO tocada (usa --adopt-orphans para asumirla)"))
     # 4. scan campeon (solo si hay cupo y no kill)
     npos = sum(1 for sym in st["managed"] if abs(float(poss.get(sym, {}).get("positionAmt", 0) or 0)) > 1e-9)
     if st["pnl_R"] > -3.0 and npos < MAXPOS:
@@ -271,10 +310,12 @@ if __name__ == "__main__":
     ap.add_argument("--state", default="auto_state.json", help="archivo de estado propio.")
     ap.add_argument("--log", default="trades.csv", help="log propio.")
     ap.add_argument("--max-pos", type=int, default=5, help="tope de posiciones de esta mosca.")
+    ap.add_argument("--adopt-orphans", action="store_true", help="asumir huerfanas con SL emergencia 8%. Sin esto solo reporta.")
     ap.add_argument("--interval", type=int, default=900, help="segundos entre pasadas en --loop.")
     a = ap.parse_args()
     TAG, SHARD, MAXPOS = a.tag, a.shard, a.max_pos  # scope modulo: asignacion directa
     STATE, LOG = os.path.join(BASE, a.state), os.path.join(BASE, a.log)
+    ADOPT = a.adopt_orphans
     if a.selftest:
         raise SystemExit(selftest())
     errs = startup_checks()
