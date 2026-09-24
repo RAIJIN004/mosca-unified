@@ -1,0 +1,6 @@
+id,symbol,ts,split,side,btc_reg,alt_reg,alpha,spike,eff,rng,risk,win,R,tb,sha,file,max_plot_ts_ok
+demo0,ASTERUSDT,1787616900000,train,LONG,neutral,alcista,4.16,1.06,0.418,5.15,4.34,0,-1.0,30,880ae6023605b2da,demo0_ASTERUSDT_1787616900000.png,1
+demo1,XPLUSDT,1787616900000,train,LONG,neutral,neutral,2.86,0.8,0.545,4.56,3.22,0,-1.0,30,46959ae943363fee,demo1_XPLUSDT_1787616900000.png,1
+demo2,XPLUSDT,1787624100000,train,LONG,bull,neutral,1.2,1.51,0.466,4.22,3.93,0,-1.0,18,58b28450771c8b57,demo2_XPLUSDT_1787624100000.png,1
+demo3,XPLUSDT,1787822100000,train,LONG,bull,alcista,4.31,2.31,0.81,7.06,6.72,0,-0.135,32,cb8d5cb1c34e3004,demo3_XPLUSDT_1787822100000.png,1
+demo4,ARUSDT,1787639400000,testB,SHORT,neutral,neutral,-1.77,0.66,0.362,2.44,2.18,0,0.5,32,b8932fe5942a4ed9,demo4_ARUSDT_1787639400000.png,1

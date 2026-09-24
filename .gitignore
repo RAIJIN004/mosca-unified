@@ -1,0 +1,4 @@
+data/photos/
+data/klines_cache.npz
+__pycache__/
+*.pyc
