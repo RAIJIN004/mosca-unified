@@ -76,19 +76,31 @@ def cmd_place(b, a):
               "newClientOrderId": TAG + f"e{int(time.time())}"}, True)
     print("ENTRY:", e.get("orderId"), e.get("status"))
     if a.sl:
-        s = b.req("POST", "/fapi/v1/order", {"symbol": a.symbol, "side": "SELL" if a.side == "BUY" else "BUY",
-                  "type": "STOP_MARKET", "stopPrice": rnd(a.sl, tick), "closePosition": "false",
-                  "reduceOnly": "true", "quantity": qty,
+        s = b.req("POST", "/fapi/v1/algoOrder", {"algoType": "CONDITIONAL", "symbol": a.symbol,
+                  "side": "SELL" if a.side == "BUY" else "BUY", "positionSide": "BOTH",
+                  "type": "STOP_MARKET", "quantity": qty, "triggerPrice": rnd(a.sl, tick),
+                  "workingType": "CONTRACT_PRICE", "reduceOnly": "true",
                   "newClientOrderId": TAG + f"s{int(time.time())}"}, True)
-        print("SL:", s.get("algoId", s.get("orderId")), s.get("algoStatus", s.get("status")))
+        print("SL:", s.get("algoId"), s.get("algoStatus"))
 def cmd_cancel(b, a):
     oo = b.req("GET", "/fapi/v1/openOrders", {"symbol": a.symbol}, True)
     mine = [o for o in oo if str(o.get("clientOrderId", "")).startswith(TAG) or a.all]
     if a.order_id: mine = [o for o in oo if str(o["orderId"]) == str(a.order_id)]
-    if not mine: print("nada que cancelar"); return
     for o in mine:
         b.req("DELETE", "/fapi/v1/order", {"symbol": a.symbol, "orderId": o["orderId"]}, True)
         print("cancelada:", o["orderId"], o.get("clientOrderId"))
+    try:
+        ao = b.req("GET", "/fapi/v1/openAlgoOrders", {"symbol": a.symbol}, True)
+        ao = ao.get("orders", ao) if isinstance(ao, dict) else (ao or [])
+        alg = [o for o in ao if (a.order_id and str(o.get("algoId")) == str(a.order_id))
+               or str(o.get("clientAlgoId", "")).startswith(TAG) or (a.all and not a.order_id)]
+        for o in alg:
+            b.req("DELETE", "/fapi/v1/algoOrder", {"symbol": a.symbol, "algoId": o["algoId"]}, True)
+            print("algo cancelada:", o["algoId"], o.get("clientAlgoId"))
+        mine = mine + alg
+    except SystemExit as e:
+        print("algos:", e)
+    if not mine: print("nada que cancelar")
 def cmd_close(b, a):
     pr = [p for p in b.req("GET", "/fapi/v2/positionRisk", signed=True) if p["symbol"] == a.symbol][0]
     pa = float(pr["positionAmt"])
