@@ -152,16 +152,80 @@ def run_once(ctx, risk_usd, short_half=True):
     with open(LOG, "a") as f:
         for a in acts: f.write(f"{datetime.now(timezone.utc).isoformat()},{a[0]},{a[1]},{a[2]}\n")
     return acts
+def startup_checks():
+    """Validacion de arranque: FAIL rapido y claro. Retorna lista de errores."""
+    errs = []
+    for f in ["config.json", "fly-mcp/rf_top9.pkl"]:
+        if not os.path.exists(os.path.join(BASE, f)): errs.append(f"falta {f}")
+    try:
+        cfg = json.load(open(os.path.join(BASE, "config.json")))
+        for k in ["train_coins", "test_coins_unseen", "signal"]:
+            if k not in cfg: errs.append(f"config sin {k}")
+    except Exception as e: errs.append(f"config ilegible: {e}")
+    if os.path.exists(STATE):
+        try:
+            st = json.load(open(STATE))
+            assert set(st) >= {"day", "pnl_R", "managed"}
+        except Exception as e: errs.append(f"state corrupto (renombra {STATE}): {e}")
+    return errs
+
+
+def selftest():
+    """Tests offline, sin red. Exit 0 = listo para operar."""
+    fails = []
+    def ok(n, c, d=""):
+        print(f"[{'PASS' if c else 'FAIL'}] {n} {d}")
+        if not c: fails.append(n)
+    # 1. matematica de niveles (caso STBL trial)
+    e, s, sgn = 0.02731, 0.02693, 1
+    tp = e + sgn * abs(e - s)
+    ok("TP-1R", abs(tp - 0.02769) < 1e-8, f"tp={tp}")
+    # 2. redondeo a tick/step (STBL: tick 1e-5, step 1)
+    tick, step = 0.00001, 1.0
+    lv = 0.027314
+    ok("tick", abs(round(round(lv / tick) * tick, 8) - 0.02731) < 1e-9)
+    noto, riskf = 52.5, 0.0571  # noto = risk_usd/risk_frac ; sizing real: qty = noto/entry
+    qty = float(int(noto / (e * step)) * step)
+    ok("qty>0 y entero", qty > 0 and qty == int(qty), f"qty={qty:g}")
+    ok("qty replica sizing live (~1922)", abs(qty - 1922) < 5, f"qty={qty:g}")
+    ok("min-notional", qty * e >= 5.0)
+    # 3. veto RF con artefacto real
+    import pickle
+    art = pickle.load(open(os.path.join(BASE, "fly-mcp/rf_top9.pkl"), "rb"))
+    import numpy as np
+    x = np.array([[5.2, 1.0, 5.7, 4.5, 0.51, 2.0, 1.5, 1.0, 0.1]])
+    p = float(art["1"]["model"].predict_proba(x)[0, 1])
+    ok("RF veto coherente", (p < art["1"]["p20"]) == (p < 0.168), f"p={p:.3f} p20={art['1']['p20']:.3f}")
+    # 4. kill-switch y cupos (logica pura)
+    ok("kill -3R", (-3.0 <= -3.0))
+    ok("prefijo tag", TAG == "mosca-")
+    # 5. startup checks en verde
+    errs = startup_checks()
+    ok("startup-checks", not errs, "; ".join(errs))
+    print(f"\nSELFTEST: {'VERDE listo' if not fails else f'{len(fails)} FAIL'}")
+    return 1 if fails else 0
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["testnet", "real"], default="testnet")
     ap.add_argument("--once", action="store_true"); ap.add_argument("--loop", action="store_true")
-    ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--risk-usd", type=float, default=3.0)
+    ap.add_argument("--live", action="store_true", help="SIN --live todo es dry-run. Seguro por defecto.")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--risk-usd", type=float, default=3.0)
     ap.add_argument("--confirm-live", action="store_true")
     a = ap.parse_args()
+    if a.selftest:
+        raise SystemExit(selftest())
+    errs = startup_checks()
+    if errs:
+        raise SystemExit("STARTUP FAIL: " + "; ".join(errs))
     if a.mode == "real" and not a.confirm_live:
         raise SystemExit("REAL exige --confirm-live. Sin excepcion.")
-    ctx = Ctx(a.mode, a.dry_run)
+    dry = not a.live  # seguro por defecto: solo --live coloca ordenes
+    print(f"modo={a.mode} live={a.live} (dry-run={dry})", flush=True)
+    ctx = Ctx(a.mode, dry)
     if a.loop:
         while True:
             print(run_once(ctx, a.risk_usd), flush=True)

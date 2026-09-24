@@ -25,5 +25,13 @@ python f5_champion.py
 ```
 `data/` (fotos, cache) se excluye de git: regenerable.
 
-## Disclaimer
+## Bot autónomo
+```bash
+python auto_bot.py --selftest                        # tests offline (debe dar VERDE)
+python auto_bot.py --mode testnet --once             # dry-run por defecto (seguro)
+python auto_bot.py --mode testnet --loop --live      # opera demo cada 15 min
+python auto_bot.py --mode real --confirm-live --live # REAL (doble seguro)
+python watcher.py                                    # auditor read-only
+```
+Sin `--live` nada coloca. Sin keys, solo-lectura. `state_schema.json`/`FLY_SKILL.md` en `hermes_cron/`.
 Investigación, no asesoría financiera. DYOR.
