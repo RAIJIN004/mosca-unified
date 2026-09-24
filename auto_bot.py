@@ -177,11 +177,20 @@ def run_once(ctx, risk_usd, short_half=True):
                         eo = ctx.req("POST", "/fapi/v1/order", {"symbol": sym, "side": "BUY" if side == 1 else "SELL",
                                     "type": "LIMIT", "quantity": qty, "price": lv_r, "timeInForce": "GTC",
                                     "newClientOrderId": TAG + f"e{int(now/1000)}"}, True)
-                        so = ctx.req("POST", "/fapi/v1/algoOrder", {"algoType": "CONDITIONAL", "symbol": sym,
-                                    "side": "SELL" if side == 1 else "BUY", "positionSide": "BOTH",
-                                    "type": "STOP_MARKET", "quantity": qty, "triggerPrice": sl_r,
-                                    "workingType": "CONTRACT_PRICE", "reduceOnly": "true",
-                                    "newClientOrderId": TAG + f"s{int(now/1000)}"}, True)
+                        try:
+                            so = ctx.req("POST", "/fapi/v1/algoOrder", {"algoType": "CONDITIONAL", "symbol": sym,
+                                        "side": "SELL" if side == 1 else "BUY", "positionSide": "BOTH",
+                                        "type": "STOP_MARKET", "quantity": qty, "triggerPrice": sl_r,
+                                        "workingType": "CONTRACT_PRICE", "reduceOnly": "true",
+                                        "newClientOrderId": TAG + f"s{int(now/1000)}"}, True)
+                        except SystemExit as se:
+                            # ROLLBACK: sin SL no hay trade. Cancela la entry y grita.
+                            try:
+                                ctx.req("DELETE", "/fapi/v1/order", {"symbol": sym, "orderId": eo.get("orderId")}, True)
+                            except SystemExit:
+                                pass
+                            acts.append(("CRIT-entry-sin-SL-rollback", sym, str(se)[:120]))
+                            break
                         st["managed"][sym] = {"t0": now, "sl": sl_r, "sl_id": so.get("algoId"),
                                               "tp_placed": False, "entry_id": eo.get("orderId")}
                         npos += 1
