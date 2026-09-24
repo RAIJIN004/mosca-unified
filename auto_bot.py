@@ -10,6 +10,11 @@ import numpy as np
 BASE = os.path.dirname(os.path.abspath(__file__))
 URLS = {"testnet": "https://demo-fapi.binance.com", "real": "https://fapi.binance.com"}
 TAG = "mosca-"
+SHARD = "0/1"
+MAXPOS = 5
+def shard_syms():
+    i, n = (int(x) for x in SHARD.split("/"))
+    return SYMS[i::n]
 SYMS = ["ASTERUSDT","XPLUSDT","PUMPUSDT","STBLUSDT","0GUSDT","WLDUSDT","ENAUSDT","ARBUSDT",
         "OPUSDT","INJUSDT","SUIUSDT","TIAUSDT","SEIUSDT","JUPUSDT","PENDLEUSDT","ONDOUSDT","FETUSDT",
         "ARUSDT","STXUSDT","GRTUSDT","LDOUSDT","SANDUSDT","MANAUSDT","AXSUSDT","APEUSDT",
@@ -130,11 +135,11 @@ def run_once(ctx, risk_usd, short_half=True):
                         "newClientOrderId": TAG + f"x{int(now/1000)}"}, True)
     # 4. scan campeon (solo si hay cupo y no kill)
     npos = sum(1 for sym in st["managed"] if abs(float(poss.get(sym, {}).get("positionAmt", 0) or 0)) > 1e-9)
-    if st["pnl_R"] > -3.0 and npos < 5:
+    if st["pnl_R"] > -3.0 and npos < MAXPOS:
         btc = ctx.kl("BTCUSDT"); bc = [float(k[4]) for k in btc]
         btc4h = (bc[-1] / bc[-17] - 1) * 100
-        for sym in SYMS:
-            if npos >= 5: break
+        for sym in shard_syms():
+            if npos >= MAXPOS: break
             try:
                 ks = ctx.kl(sym)
                 closes = np.array([float(k[4]) for k in ks]); highs = np.array([float(k[2]) for k in ks])
@@ -252,7 +257,14 @@ if __name__ == "__main__":
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--risk-usd", type=float, default=3.0)
     ap.add_argument("--confirm-live", action="store_true")
+    ap.add_argument("--shard", default="0/1", help="enjambre: I/N, ej. 0/3. Subconjunto disjunto de monedas.")
+    ap.add_argument("--tag", default="mosca-", help="prefijo de ordenes propio de esta mosca.")
+    ap.add_argument("--state", default="auto_state.json", help="archivo de estado propio.")
+    ap.add_argument("--log", default="trades.csv", help="log propio.")
+    ap.add_argument("--max-pos", type=int, default=5, help="tope de posiciones de esta mosca.")
     a = ap.parse_args()
+    TAG, SHARD, MAXPOS = a.tag, a.shard, a.max_pos  # scope modulo: asignacion directa
+    STATE, LOG = os.path.join(BASE, a.state), os.path.join(BASE, a.log)
     if a.selftest:
         raise SystemExit(selftest())
     errs = startup_checks()

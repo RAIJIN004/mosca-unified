@@ -10,3 +10,6 @@ alerts.json
 ALERTS.md
 
 keys_*.bat
+
+auto_state*.json
+trades*.csv
