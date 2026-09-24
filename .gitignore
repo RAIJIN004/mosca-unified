@@ -5,3 +5,6 @@ __pycache__/
 
 auto_state.json
 trades.csv
+
+alerts.json
+ALERTS.md
