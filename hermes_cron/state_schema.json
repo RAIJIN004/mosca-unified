@@ -1,0 +1,16 @@
+# Estado que la mosca SÍ ve (inyectado por el cron cada run — sin esto es ciega)
+{
+  "cuenta": {"balance": 0.0, "pnl_dia_R": 0.0, "margen_usado_pct": 0.0, "kill_switch": false},
+  "posiciones": [{"symbol": "STBLUSDT", "side": "LONG", "qty": 1922, "entry": 0.02731,
+    "uPnL_R": 0.0, "velas_abierta": 0, "dist_SL_R": 1.0, "dist_TP_R": 1.0,
+    "sl_colocado": true, "tp_colocado": false, "origen": "mosca"}],
+  "entradas_pendientes": [{"symbol": "STBLUSDT", "lado": "LONG", "precio": 0.02731,
+    "dist_mark_pct": -4.0, "edad_velas": 2, "expira_en": 10}],
+  "menu": ["TOP-10 unified del scan actual + SKIP"],
+  "hambre": 0.6
+}
+# Reglas de conciencia:
+# - La mosca solo ve este JSON. No recuerda runs pasados salvo `pnl_dia_R`, `hambre`, `velas_abierta`.
+# - Posiciones ajenas (origen != mosca, ej. AVAUSDT manual) son INTocables: ni ver, ni contar para cupo.
+# - Entrada >12 velas sin fill → CANCELAR. Posición >32 velas → CERRAR a mercado.
+# - TP no pre-colocable bajo el mark → al fill, LIMIT opuesto INMEDIATO (lección trial 2026-09-24).
