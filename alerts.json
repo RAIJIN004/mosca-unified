@@ -1,0 +1,8 @@
+[
+ {
+  "ts": "2026-09-24T20:41:21.987323+00:00",
+  "sev": "INFO",
+  "codigo": "TRIAL",
+  "detalle": "STBLUSDT entry 286427756 + SL algo 1000000217221642: verificar NEW/filled por MCP y poner TP al fill"
+ }
+]
