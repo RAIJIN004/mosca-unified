@@ -15,6 +15,7 @@ echo 4. close SYMBOL
 echo 5. tp SYMBOL BUY/SELL QTY PRICE
 echo 0. salir
 set /p op="opcion: "
+if not defined op goto fin
 if "%op%"=="0" goto fin
 if "%op%"=="1" set cmd=status
 if "%op%"=="2" set cmd=place-entry
