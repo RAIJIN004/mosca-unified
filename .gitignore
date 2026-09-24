@@ -2,3 +2,6 @@ data/photos/
 data/klines_cache.npz
 __pycache__/
 *.pyc
+
+auto_state.json
+trades.csv
