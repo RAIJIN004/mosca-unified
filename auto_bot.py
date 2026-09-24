@@ -11,7 +11,9 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 URLS = {"testnet": "https://demo-fapi.binance.com", "real": "https://fapi.binance.com"}
 TAG = "mosca-"
 SYMS = ["ASTERUSDT","XPLUSDT","PUMPUSDT","STBLUSDT","0GUSDT","WLDUSDT","ENAUSDT","ARBUSDT",
-        "OPUSDT","INJUSDT","SUIUSDT","TIAUSDT","SEIUSDT","JUPUSDT","PENDLEUSDT","ONDOUSDT","FETUSDT"]
+        "OPUSDT","INJUSDT","SUIUSDT","TIAUSDT","SEIUSDT","JUPUSDT","PENDLEUSDT","ONDOUSDT","FETUSDT",
+        "ARUSDT","STXUSDT","GRTUSDT","LDOUSDT","SANDUSDT","MANAUSDT","AXSUSDT","APEUSDT",
+        "RENDERUSDT","TAOUSDT","JASMYUSDT","WIFUSDT","DOGEUSDT","SOLUSDT"]
 STATE = os.path.join(BASE, "auto_state.json")
 LOG = os.path.join(BASE, "trades.csv")
 def load_state():
@@ -76,10 +78,10 @@ def run_once(ctx, risk_usd, short_half=True):
     ords = ctx.req("GET", "/fapi/v1/openOrders", signed=True) if ctx.key else []
     try:
         _ao = ctx.req("GET", "/fapi/v1/openAlgoOrders", signed=True) if ctx.key else []
-        _ao = _ao.get("orders", _ao) if isinstance(_ao, dict) else (_ao or [])
+        ALGOS = _ao.get("orders", _ao) if isinstance(_ao, dict) else (_ao or [])
     except Exception:
-        _ao = []
-    busy = {o["symbol"] for o in ords} | {o["symbol"] for o in _ao}
+        ALGOS = []
+    busy = {o["symbol"] for o in ords} | {o["symbol"] for o in ALGOS}
     now = int(time.time() * 1000)
     # 2. gestionar entradas (edad por updateTime)
     for o in ords:
@@ -92,6 +94,12 @@ def run_once(ctx, risk_usd, short_half=True):
     for sym, m in list(st["managed"].items()):
         pa = float(poss.get(sym, {}).get("positionAmt", 0) or 0)
         bars = (now - m["t0"]) // 900000
+        my_orders = [o for o in ords if o.get("symbol") == sym and str(o.get("clientOrderId", "")).startswith(TAG)]
+        my_orders += [o for o in ALGOS if o.get("symbol") == sym and str(o.get("clientAlgoId", "")).startswith(TAG)]
+        if abs(pa) < 1e-9 and not my_orders:
+            # ciclo cerrado y sin ordenes: libera el simbolo para el proximo setup (como el backtest, sin memoria)
+            st["managed"].pop(sym, None)
+            continue
         if abs(pa) < 1e-9:
             if m.get("sl_id"):  # entrada nunca llenada y ya sin posicion: limpia SL huerfano
                 try:
@@ -159,6 +167,7 @@ def run_once(ctx, risk_usd, short_half=True):
                     if qty * lv < 5.5: continue
                     lv_r = round(round(lv / tick) * tick, 8); sl_r = round(round(sl / tick) * tick, 8)
                     acts.append(("entry", sym, f"{'BUY' if side==1 else 'SELL'} {qty:g} @ {lv_r} SL {sl_r}"))
+                    busy.add(sym)  # una entrada por moneda por pasada (live y dry)
                     if not ctx.dry:
                         eo = ctx.req("POST", "/fapi/v1/order", {"symbol": sym, "side": "BUY" if side == 1 else "SELL",
                                     "type": "LIMIT", "quantity": qty, "price": lv_r, "timeInForce": "GTC",
@@ -170,8 +179,8 @@ def run_once(ctx, risk_usd, short_half=True):
                                     "newClientOrderId": TAG + f"s{int(now/1000)}"}, True)
                         st["managed"][sym] = {"t0": now, "sl": sl_r, "sl_id": so.get("algoId"),
                                               "tp_placed": False, "entry_id": eo.get("orderId")}
-                        busy.add(sym)
                         npos += 1
+                    break  # solo la primera senal valida por moneda y pasada
             except Exception as e:
                 acts.append(("warn", sym, str(e)[:100]))
     save_state(st)
