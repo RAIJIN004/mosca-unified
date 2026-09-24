@@ -33,5 +33,14 @@ python auto_bot.py --mode testnet --loop --live      # opera demo cada 15 min
 python auto_bot.py --mode real --confirm-live --live # REAL (doble seguro)
 python watcher.py                                    # auditor read-only
 ```
-Sin `--live` nada coloca. Sin keys, solo-lectura. `state_schema.json`/`FLY_SKILL.md` en `hermes_cron/`.
+## Doble-clic (.bat, sin IA)
+```bat
+trade_testnet.bat status STBLUSDT
+trade_testnet.bat place-entry STBLUSDT BUY 1922 0.02731 --sl 0.02693
+trade_testnet.bat cancel STBLUSDT --order-id 286427756
+trade_testnet.bat close STBLUSDT
+trade_real.bat status BTCUSDT   (exige CONFIRM_LIVE=1, ya incluido)
+```
+Verificado en testnet: status/place/cancel/close OK (reloj auto-sincronizado, firma exacta).
+`keys_testnet.bat` / `keys_real.bat` viven solo en local (gitignored). OJO: contienen secretos.
 Investigación, no asesoría financiera. DYOR.

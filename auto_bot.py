@@ -23,20 +23,34 @@ def load_state():
 def save_state(d): json.dump(d, open(STATE, "w"), indent=1)
 class Ctx:
     def __init__(s, mode, dry):
-        s.base = URLS[mode]; s.dry = dry
+        s.base = URLS[mode]; s.dry = dry; s._toff = None
         if mode == "testnet": s.key, s.sec = os.getenv("TESTNET_KEY", ""), os.getenv("TESTNET_SECRET", "")
         else: s.key, s.sec = os.getenv("BINANCE_KEY", ""), os.getenv("BINANCE_SECRET", "")
     def sign(s, p):
         q = "&".join(f"{k}={p[k]}" for k in sorted(p))
         return hmac.new(s.sec.encode(), q.encode(), hashlib.sha256).hexdigest()
     def req(s, m, path, params=None, signed=False):
-        params = params or {}
+        params = dict(params or {})
+        headers = {"X-MBX-APIKEY": s.key} if signed else {}
+        url = s.base + path
+        data = None
         if signed:
-            params.update({"timestamp": int(time.time() * 1000), "recvWindow": 5000})
-            params["signature"] = s.sign(params)
-        h = {"X-MBX-APIKEY": s.key} if signed else {}
-        r = requests.request(m, s.base + path, params=params if m == "GET" else None,
-                             data=params if m != "GET" else None, headers=h, timeout=20)
+            if s._toff is None:
+                try:
+                    srv = requests.get(s.base + "/fapi/v1/time", timeout=15).json()["serverTime"]
+                    s._toff = srv - int(time.time() * 1000)
+                except Exception:
+                    s._toff = 0
+            params.update({"timestamp": int(time.time() * 1000) + s._toff, "recvWindow": 30000})
+            qs = "&".join(f"{k}={params[k]}" for k in sorted(params))
+            qs += "&signature=" + hmac.new(s.sec.encode(), qs.encode(), hashlib.sha256).hexdigest()
+            if m == "GET":
+                url += "?" + qs
+            else:
+                data = qs
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+            params = None
+        r = requests.request(m, url, params=params, data=data, headers=headers, timeout=20)
         r.raise_for_status()
         return r.json() if r.text else {}
     def kl(s, sym, n=100):
