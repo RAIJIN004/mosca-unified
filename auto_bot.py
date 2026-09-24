@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import requests
 import numpy as np
 BASE = os.path.dirname(os.path.abspath(__file__))
-URLS = {"testnet": "https://testnet.binancefuture.com", "real": "https://fapi.binance.com"}
+URLS = {"testnet": "https://demo-fapi.binance.com", "real": "https://fapi.binance.com"}
 TAG = "mosca-"
 SYMS = ["ASTERUSDT","XPLUSDT","PUMPUSDT","STBLUSDT","0GUSDT","WLDUSDT","ENAUSDT","ARBUSDT",
         "OPUSDT","INJUSDT","SUIUSDT","TIAUSDT","SEIUSDT","JUPUSDT","PENDLEUSDT","ONDOUSDT","FETUSDT"]
@@ -74,6 +74,12 @@ def run_once(ctx, risk_usd, short_half=True):
     acct = ctx.req("GET", "/fapi/v2/account", signed=True) if ctx.key else {}
     poss = {p["symbol"]: p for p in ctx.req("GET", "/fapi/v2/positionRisk", signed=True)} if ctx.key else {}
     ords = ctx.req("GET", "/fapi/v1/openOrders", signed=True) if ctx.key else []
+    try:
+        _ao = ctx.req("GET", "/fapi/v1/openAlgoOrders", signed=True) if ctx.key else []
+        _ao = _ao.get("orders", _ao) if isinstance(_ao, dict) else (_ao or [])
+    except Exception:
+        _ao = []
+    busy = {o["symbol"] for o in ords} | {o["symbol"] for o in _ao}
     now = int(time.time() * 1000)
     # 2. gestionar entradas (edad por updateTime)
     for o in ords:
@@ -89,7 +95,11 @@ def run_once(ctx, risk_usd, short_half=True):
         if abs(pa) < 1e-9:
             if m.get("sl_id"):  # entrada nunca llenada y ya sin posicion: limpia SL huerfano
                 try:
-                    if not ctx.dry: ctx.req("DELETE", "/fapi/v1/order", {"symbol": sym, "orderId": m["sl_id"]}, True)
+                    if not ctx.dry:
+                        try:
+                            ctx.req("DELETE", "/fapi/v1/order", {"symbol": sym, "orderId": m["sl_id"]}, True)
+                        except SystemExit:
+                            ctx.req("DELETE", "/fapi/v1/algoOrder", {"symbol": sym, "algoId": m["sl_id"]}, True)
                     acts.append(("cancel-sl-huerfano", sym, m["sl_id"]))
                 except Exception as e: acts.append(("warn", sym, str(e)[:80]))
             continue
@@ -138,6 +148,8 @@ def run_once(ctx, risk_usd, short_half=True):
                     fb = (c_1 - o1) / o1 * 100 * sgn
                     fv = float(vols[i + 1] / (np.mean(vols[max(0, i - 19):i + 1]) + 1e-9))
                     if fb < -0.3 and fv >= 1.2: continue
+                    if sym in busy:
+                        continue  # anti-duplicado: ya hay orden/posicion en este simbolo
                     if sym in st["managed"] and abs(float(poss.get(sym, {}).get("positionAmt", 0) or 0)) > 1e-9: continue
                     lv = h4 - (h4 - l4) * 0.8 if side == 1 else l4 + (h4 - l4) * 0.8
                     rloc = risk_usd * (0.5 if side == -1 and short_half else 1.0)
@@ -151,12 +163,14 @@ def run_once(ctx, risk_usd, short_half=True):
                         eo = ctx.req("POST", "/fapi/v1/order", {"symbol": sym, "side": "BUY" if side == 1 else "SELL",
                                     "type": "LIMIT", "quantity": qty, "price": lv_r, "timeInForce": "GTC",
                                     "newClientOrderId": TAG + f"e{int(now/1000)}"}, True)
-                        so = ctx.req("POST", "/fapi/v1/order", {"symbol": sym, "side": "SELL" if side == 1 else "BUY",
-                                    "type": "STOP_MARKET", "stopPrice": sl_r, "closePosition": "false",
-                                    "reduceOnly": "true", "quantity": qty,
+                        so = ctx.req("POST", "/fapi/v1/algoOrder", {"algoType": "CONDITIONAL", "symbol": sym,
+                                    "side": "SELL" if side == 1 else "BUY", "positionSide": "BOTH",
+                                    "type": "STOP_MARKET", "quantity": qty, "triggerPrice": sl_r,
+                                    "workingType": "CONTRACT_PRICE", "reduceOnly": "true",
                                     "newClientOrderId": TAG + f"s{int(now/1000)}"}, True)
-                        st["managed"][sym] = {"t0": now, "sl": sl_r, "sl_id": so.get("orderId", so.get("algoId")),
+                        st["managed"][sym] = {"t0": now, "sl": sl_r, "sl_id": so.get("algoId"),
                                               "tp_placed": False, "entry_id": eo.get("orderId")}
+                        busy.add(sym)
                         npos += 1
             except Exception as e:
                 acts.append(("warn", sym, str(e)[:100]))

@@ -11,7 +11,7 @@ with open(os.path.join(BASE, "rf_top9.pkl"), "rb") as f:
 TOP = ART["TOP"]
 
 REAL = "https://fapi.binance.com"
-TEST = "https://testnet.binancefuture.com"
+TEST = "https://demo-fapi.binance.com"
 
 mcp = FastMCP(
     "fly-mcp",
