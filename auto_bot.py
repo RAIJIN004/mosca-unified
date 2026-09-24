@@ -262,6 +262,7 @@ if __name__ == "__main__":
     ap.add_argument("--state", default="auto_state.json", help="archivo de estado propio.")
     ap.add_argument("--log", default="trades.csv", help="log propio.")
     ap.add_argument("--max-pos", type=int, default=5, help="tope de posiciones de esta mosca.")
+    ap.add_argument("--interval", type=int, default=900, help="segundos entre pasadas en --loop.")
     a = ap.parse_args()
     TAG, SHARD, MAXPOS = a.tag, a.shard, a.max_pos  # scope modulo: asignacion directa
     STATE, LOG = os.path.join(BASE, a.state), os.path.join(BASE, a.log)
@@ -276,8 +277,16 @@ if __name__ == "__main__":
     print(f"modo={a.mode} live={a.live} (dry-run={dry})", flush=True)
     ctx = Ctx(a.mode, dry)
     if a.loop:
+        n = 0
         while True:
-            print(run_once(ctx, a.risk_usd), flush=True)
-            time.sleep(900)
+            n += 1
+            try:
+                print(f"--- pasada {n} {datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC tag={TAG} shard={SHARD} ---", flush=True)
+                print(run_once(ctx, a.risk_usd), flush=True)
+            except Exception as e:
+                print(f"ERROR pasada {n}: {str(e)[:200]} (reintento en {a.interval}s)", flush=True)
+            for s in range(a.interval, 0, -60):
+                print(f"  ... proxima pasada en {s//60}min", flush=True)
+                time.sleep(min(60, s))
     else:
         print(run_once(ctx, a.risk_usd))
