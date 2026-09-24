@@ -1,0 +1,4 @@
+mcp
+requests
+numpy
+scikit-learn
