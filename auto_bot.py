@@ -62,13 +62,25 @@ class Ctx:
         r.raise_for_status()
         return r.json() if r.text else {}
     def kl(s, sym, n=100):
-        return s.req("GET", "/fapi/v1/klines", {"symbol": sym, "interval": "15m", "limit": n})
+        last = None
+        for w in (1, 3, 8):
+            try:
+                return s.req("GET", "/fapi/v1/klines", {"symbol": sym, "interval": "15m", "limit": n})
+            except SystemExit as e:
+                last = e
+                time.sleep(w)
+        raise last
 def excel(sym, ctx, cache):
     if sym not in cache:
         info = ctx.req("GET", "/fapi/v1/exchangeInfo")
-        s = [x for x in info["symbols"] if x["symbol"] == sym][0]
+        s = [x for x in info["symbols"] if x["symbol"] == sym]
+        if not s: raise SystemExit(f"no-listado {sym}")
+        s = s[0]
+        if s.get("status") != "TRADING": raise SystemExit(f"no-trading {sym}")
         f = {x["filterType"]: x for x in s["filters"]}
-        cache[sym] = (float(f["LOT_SIZE"]["stepSize"]), float(f["PRICE_FILTER"]["tickSize"]))
+        pp = f.get("PERCENT_PRICE", {})
+        cache[sym] = (float(f["LOT_SIZE"]["stepSize"]), float(f["PRICE_FILTER"]["tickSize"]),
+                      float(pp.get("multiplierUp", 10)), float(pp.get("multiplierDown", 0.1)))
     return cache[sym]
 def run_once(ctx, risk_usd, short_half=True):
     st = load_state()
@@ -108,34 +120,44 @@ def run_once(ctx, risk_usd, short_half=True):
             continue
         if abs(pa) < 1e-9:
             if m.get("sl_id"):  # entrada nunca llenada y ya sin posicion: limpia SL huerfano
-                try:
-                    if not ctx.dry:
-                        try:
-                            ctx.req("DELETE", "/fapi/v1/order", {"symbol": sym, "orderId": m["sl_id"]}, True)
-                        except SystemExit:
-                            ctx.req("DELETE", "/fapi/v1/algoOrder", {"symbol": sym, "algoId": m["sl_id"]}, True)
-                    acts.append(("cancel-sl-huerfano", sym, m["sl_id"]))
-                except Exception as e: acts.append(("warn", sym, str(e)[:80]))
+                # SOLO si el SL es nuestro (tag). JAMAS tocar algos ajenos (ej. otro agente espejando).
+                propio = any(str(o.get("algoId")) == str(m["sl_id"]) and
+                             str(o.get("clientAlgoId", "")).startswith(TAG) for o in ALGOS)
+                propio = propio or any(str(o.get("orderId")) == str(m["sl_id"]) and
+                             str(o.get("clientOrderId", "")).startswith(TAG) for o in ords)
+                if not propio:
+                    acts.append(("CRIT-desync-sl", sym, f"sl_id {m['sl_id']} no es nuestro: NO tocado, desregistrado"))
+                    m["sl_id"] = None
+                else:
+                    try:
+                        if not ctx.dry:
+                            try:
+                                ctx.req("DELETE", "/fapi/v1/order", {"symbol": sym, "orderId": m["sl_id"]}, True)
+                            except SystemExit:
+                                ctx.req("DELETE", "/fapi/v1/algoOrder", {"symbol": sym, "algoId": m["sl_id"]}, True)
+                        acts.append(("cancel-sl-huerfano", sym, m["sl_id"]))
+                    except Exception as e: acts.append(("warn", sym, str(e)[:200]))
             continue
         if not m.get("tp_placed"):
             px = float(poss[sym].get("entryPrice")); sgn = 1 if pa > 0 else -1
             tp = px + sgn * abs(px - m["sl"])
             acts.append(("tp", sym, round(tp, 8)))
             if not ctx.dry:
-                step, tick = excel(sym, ctx, {})
+                step, tick, _, _ = excel(sym, ctx, {})
                 tpr = round(round(tp / tick) * tick, 8)
                 ctx.req("POST", "/fapi/v1/order", {"symbol": sym, "side": "SELL" if pa > 0 else "BUY",
                         "type": "LIMIT", "quantity": abs(pa), "price": tpr, "timeInForce": "GTC",
                         "reduceOnly": "true", "newClientOrderId": TAG + f"tp{int(now/1000)}"}, True)
                 m["tp_placed"] = True
-        # SL vivo? si la posicion sigue abierta pero su SL desaparecio -> reponer o cerrar
+        # SL vivo? propio (tag) o adoptado-registrado. Si falta con posicion abierta -> reponer o cerrar.
         sl_vivo = any(o.get("symbol") == sym and str(o.get("clientAlgoId", "")).startswith(TAG)
                       for o in ALGOS)
+        sl_vivo = sl_vivo or (m.get("sl_id") and any(str(o.get("algoId")) == str(m["sl_id"]) for o in ALGOS))
         if not sl_vivo:
             acts.append(("SL-ausente", sym, f"reponiendo SL @ {m['sl']}"))
             if not ctx.dry:
                 try:
-                    step, tick = excel(sym, ctx, {})
+                    step, tick, _, _ = excel(sym, ctx, {})
                     ctx.req("POST", "/fapi/v1/algoOrder", {"algoType": "CONDITIONAL", "symbol": sym,
                             "side": "SELL" if pa > 0 else "BUY", "positionSide": "BOTH",
                             "type": "STOP_MARKET", "quantity": abs(pa), "triggerPrice": m["sl"],
@@ -206,9 +228,13 @@ def run_once(ctx, risk_usd, short_half=True):
                     lv = h4 - (h4 - l4) * 0.8 if side == 1 else l4 + (h4 - l4) * 0.8
                     rloc = risk_usd * (0.5 if side == -1 and short_half else 1.0)
                     noto = rloc / (risk / 100)
-                    step, tick = excel(sym, ctx, {})
+                    step, tick, mup, mdn = excel(sym, ctx, {})
                     qty = max(0, float(int(noto / (lv * step)) * step))
                     if qty * lv < 5.5: continue
+                    mark = float(closes[-1])
+                    if not (mark * mdn <= lv <= mark * mup):
+                        acts.append(("skip-fuera-banda-5%", sym, f"entry {lv:.6g} fuera de [{mark*mdn:.6g},{mark*mup:.6g}]"))
+                        continue
                     lv_r = round(round(lv / tick) * tick, 8); sl_r = round(round(sl / tick) * tick, 8)
                     acts.append(("entry", sym, f"{'BUY' if side==1 else 'SELL'} {qty:g} @ {lv_r} SL {sl_r}"))
                     busy.add(sym)  # una entrada por moneda por pasada (live y dry)
@@ -235,7 +261,7 @@ def run_once(ctx, risk_usd, short_half=True):
                         npos += 1
                     break  # solo la primera senal valida por moneda y pasada
             except Exception as e:
-                acts.append(("warn", sym, str(e)[:100]))
+                acts.append(("warn", sym, str(e)[:200]))
     save_state(st)
     if not os.path.exists(LOG):
         open(LOG, "w").write("ts,accion,symbol,detalle\n")
