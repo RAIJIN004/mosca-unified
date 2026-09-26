@@ -25,7 +25,11 @@ python f5_champion.py
 ```
 `data/` (fotos, cache) se excluye de git: regenerable.
 
-## Bot autónomo
+## Version unified (`auto_unified.py`, tag `moscaU-`)
+Misma entrada/gestion del campeon, pero universo DINAMICO estilo trend-unified: top volumen
+24h (sin basura/estables/majors) rankeado por escalera 1h + deriva leve a favor
+(LONG exige 24h>=-5%). `--book` opcional (sin backtest). Medido: escalera y deriva
+NO mejoran el win (85-86% en todos los cortes, F7/F8); aportan rotacion de monedas.
 ```bash
 python auto_bot.py --selftest                        # tests offline (debe dar VERDE)
 python auto_bot.py --mode testnet --once             # dry-run por defecto (seguro)
